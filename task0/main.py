@@ -38,9 +38,6 @@ class ObjFuncSDG(ObjFunc):
     def __init__(self, y: Union[np.ndarray, float], phi: np.ndarray):
         super().__init__(y, phi)
 
-    def __call__(self, w: np.ndarray, indices: np.ndarray) -> Union[float, np.ndarray]:
-        return np.linalg.norm(self.y[indices] - self.phi[indices, :] @ w) ** 2 / indices.shape[0]
-
     def grad(self, w: np.ndarray, indices: np.ndarray) -> np.ndarray:
         return 2 * self.phi[indices, :].T @ (self.phi[indices, :] @ w - self.y[indices]) / indices.shape[0]
 
@@ -51,9 +48,12 @@ def gradient_descent(obj_func: ObjFunc, w_init: np.ndarray, lr: float, tol: floa
     w_curr = w_init
     w_hist: List[np.ndarray] = [w_init]
     obj_hist: List[Union[float, np.ndarray]] = [obj_func(w_curr)]
+    error = np.zeros_like(w_curr)
     for step in range(max_steps):
         direction: np.ndarray = obj_func.grad(w_curr)
-        w_next = w_curr - lr * direction
+        w_next = error*0.99+w_curr - lr * direction
+        error = w_next - w_curr
+        print(obj_func(w_curr))
         if np.allclose(w_next, w_curr, tol):
             break
         w_curr = w_next
@@ -68,10 +68,14 @@ def sgd(obj_func: ObjFuncSDG, w_init: np.ndarray, lr: float, tol: float, n_epoch
     for epoch in range(n_epoch):
         rand_idx: np.ndarray = np.array([x for x in range(obj_func.n)], dtype=int)
         np.random.shuffle(rand_idx)
+        error = np.zeros_like(w_curr)
         for i in range(0, obj_func.n, batch_size):
-            batch_idx: np.ndarray = rand_idx[i * batch_size: (i + 1) * batch_size]
+            batch_idx: np.ndarray = rand_idx[i: i + batch_size]
             direction: np.ndarray = obj_func.grad(w_curr, batch_idx)
-            w_next = w_curr - lr * direction
+            #direction = direction / np.linalg.norm(direction)
+            w_next = error * 0.9 - lr * direction + w_curr
+            error = w_next - w_curr
+            print(obj_func(w_curr))
             if np.allclose(w_next, w_curr, tol):
                 return w_next
             w_curr = w_next
@@ -81,22 +85,24 @@ def sgd(obj_func: ObjFuncSDG, w_init: np.ndarray, lr: float, tol: float, n_epoch
 # %%
 # hyperparams
 
-learning_rate = 0.001
+learning_rate = 0.01
 tol = 1e-6
-n_steps = 10000
+n_steps = 100
 
 batch_size = 100
-num_of_epochs = 5
+num_of_epochs = 100
 # %%
 phi = train_x.copy().astype(np.float64)
 phi = np.insert(phi, 0, 1, axis=1)
 # %%
 w_init = np.random.random(11)
 
-# fitting = ObjFunc(y=train_y, phi=phi)
-fitting = ObjFuncSDG(y=train_y, phi=phi)
+fitting = ObjFunc(y=train_y, phi=phi)
+#fitting = ObjFuncSDG(y=train_y, phi=phi)
 
-# w_res, _, _ = gradient_descent(fitting, w_init, lr=learning_rate, tol=tol, max_steps=n_steps)
-w_res = sgd(fitting, w_init, lr=learning_rate, tol=tol, n_epoch=num_of_epochs, batch_size=batch_size)
+w_res, _, _ = gradient_descent(fitting, w_init, lr=learning_rate, tol=tol, max_steps=n_steps)
+#w_res = sgd(fitting, w_init, lr=learning_rate, tol=tol, n_epoch=num_of_epochs, batch_size=batch_size)
 
-print(w_res)
+#C = np.linalg.eig(phi.T@phi)
+#print("C", C[0])
+
