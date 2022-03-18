@@ -150,6 +150,7 @@ test_x: np.ndarray = test_mat[:, 1:]
 test_x_expd: np.ndarray = np.insert(test_x, 0, 1, axis=1)
 predict_n: np.ndarray = test_x_expd @ w_n
 predict_cf: np.ndarray = test_x_expd @ w_cf
+predict_sk: np.ndarray = test_x_expd @ w
 
 # test_y: pd.DataFrame = pd.DataFrame(data=np.concatenate((test_id.reshape(-1, 1), predict_n.reshape(-1, 1)), axis=1),
 #                                     columns=['Id', 'y'])
@@ -163,3 +164,8 @@ test_y_cf: pd.DataFrame = pd.DataFrame(data=predict_cf, index=test_id,
                                        columns=['y'])
 
 test_y_cf.to_csv('out_cf.csv', index_label='Id')
+
+test_y_sk: pd.DataFrame = pd.DataFrame(data=predict_sk, index=test_id,
+                                       columns=['y'])
+
+test_y_sk.to_csv('out_sk.csv', index_label='Id')
