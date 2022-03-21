@@ -7,9 +7,9 @@ from typing import Optional
 # hyper-parameters
 Lmbda = [0.1, 1, 10, 100, 200]
 K = 10  # num of fold
-LR = 1e-3
+LR = 1e-5
 TOL = 1e-6
-BATCH_SIZE = 100
+BATCH_SIZE = 15
 
 
 class Regression:
@@ -25,19 +25,19 @@ class Regression:
                + ridge * 2 * lmbda * w
 
     def fit_sgd(self, data_range: np.ndarray, w0: np.ndarray, lr: float, tol: float, n_epoch: int, batch_size: int,
-                lmbda: float = 0, return_value: bool = False) -> Optional[np.ndarray]:
+                lmbda: float = 0, return_value: bool = False, momentum: bool = False) -> Optional[np.ndarray]:
         w_curr = w0
         self.w = np.zeros_like(w0)  # reset
         rand_idx: np.ndarray = data_range
-        np.random.shuffle(rand_idx)
         error = np.zeros_like(w_curr)
         for epoch in range(n_epoch):
-            for i in range(0, self.n, batch_size):
+            np.random.shuffle(rand_idx)
+            for i in range(0, data_range.shape[0], batch_size):
                 batch_idx: np.ndarray = rand_idx[i: i + batch_size]
                 direction: np.ndarray = self.grad(w_curr, batch_idx, lmbda=lmbda)
-                w_next = w_curr - lr * direction + 0.8 * error
+                w_next = w_curr - lr * direction + 0.8 * error * momentum
                 error = w_next - w_curr
-                if np.linalg.norm(w_next - w_curr) <= tol:
+                if np.linalg.norm(error) <= tol:
                     print("Converged")
                     self.w = w_next
                     if return_value:
@@ -99,7 +99,9 @@ if __name__ == '__main__':
         rmse: float = 0
         for folded in fold_indices:
             model.reset_weight()
-            data = np.asarray(set(np.arange(train_y.shape[0])) - set(folded))  # maybe this is incorrect? No idea lol
-            model.fit_sgd(data, w_init, lr=LR, tol=TOL, n_epoch=1000, batch_size=BATCH_SIZE, lmbda=l)
+            data = np.asarray(list(set(np.arange(train_y.shape[0])) - set(folded)))
+            model.fit_sgd(data, w_init, lr=LR, tol=TOL, n_epoch=10000, batch_size=BATCH_SIZE, lmbda=l, momentum=True)
             rmse += model.eval()
         rmses.append(rmse/K)
+
+    print(rmses)
