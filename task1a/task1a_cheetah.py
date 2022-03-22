@@ -42,4 +42,4 @@ if __name__ == '__main__':
 
     print(rmses)
     df = pd.DataFrame(rmses)
-    df.to_csv(r'C:/course/IML/IML-Outofboundary/task1a/result.csv', index = False)
+    df.to_csv(r'C:/course/IML/IML-Outofboundary/task1a/result.csv', index = False, header=False)
