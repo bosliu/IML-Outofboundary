@@ -5,7 +5,7 @@ from sklearn.metrics import mean_squared_error
 from typing import Optional
 
 # hyper-parameters
-Lmbda = [0.1, 1, 10, 100, 200]
+Lmbda = [10000, 1, 10, 100, 200]
 K = 10  # num of fold
 LR = 1e-5
 TOL = 1e-6
@@ -24,8 +24,11 @@ class Regression:
         return 2 * self.phi[indices, :].T @ (self.phi[indices, :] @ w - self.y[indices]) / indices.shape[0] \
                + ridge * 2 * lmbda * w
 
+    def loss(self):
+        pass
+
     def fit_sgd(self, data_range: np.ndarray, w0: np.ndarray, lr: float, tol: float, n_epoch: int, batch_size: int,
-                lmbda: float = 0, return_value: bool = False, momentum: bool = False) -> Optional[np.ndarray]:
+                lmbda: float = 0, return_value: bool = False, momentum: bool = True) -> Optional[np.ndarray]:
         w_curr = w0
         self.w = np.zeros_like(w0)  # reset
         rand_idx: np.ndarray = data_range
@@ -71,8 +74,8 @@ class Regression:
         if return_value:
             return self.w
 
-    def eval(self):
-        return mean_squared_error(self.y, self.phi @ self.w)
+    def eval(self, indices):
+        return mean_squared_error(self.y[indices], self.phi[indices] @ self.w)
 
     def reset_weight(self):
         self.w = None
@@ -97,11 +100,13 @@ if __name__ == '__main__':
 
     for l in Lmbda:
         rmse: float = 0
+        print(f"{l}\n")
         for folded in fold_indices:
             model.reset_weight()
             data = np.asarray(list(set(np.arange(train_y.shape[0])) - set(folded)))
-            model.fit_sgd(data, w_init, lr=LR, tol=TOL, n_epoch=10000, batch_size=BATCH_SIZE, lmbda=l, momentum=True)
-            rmse += model.eval()
+            model.Newton(w_init, LR, TOL, 10000, l)
+            # model.fit_sgd(data, w_init, lr=LR, tol=TOL, n_epoch=10000, batch_size=BATCH_SIZE, lmbda=l, momentum=True)
+            rmse += model.eval(folded)  # todo fold k!
         rmses.append(rmse/K)
 
     print(rmses)
