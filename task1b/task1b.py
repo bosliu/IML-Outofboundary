@@ -12,6 +12,6 @@ if __name__ == '__main__':
 
     phi = np.concatenate((X, np.square(X), np.exp(X), np.cos(X), np.ones_like(y).reshape(-1, 1)), axis=1)
 
-    model = LinearRegression()
+    model = LinearRegression(fit_intercept=False)
     model.fit(phi, y)
     print(model.coef_)
