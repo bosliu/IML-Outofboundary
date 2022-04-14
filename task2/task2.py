@@ -10,17 +10,38 @@ from sklearn.ensemble import AdaBoostClassifier
 from typing import List
 
 
-def x_data_preprocess(n_samples: int = 12):
+def x_data_preprocess(n_samples: int = 12, processed: bool = True):
     train_features = pd.read_csv('train_features.csv')
     test_features = pd.read_csv('test_features.csv')
     num_of_patient = train_features.pid.nunique()  # number of patients
-    train_mat = train_features.iloc[:, 2:].to_numpy()  # .reshape(num_of_patient, n_samples, -1)
+    num_of_patient_test = test_features.pid.nunique()
+    # .reshape(num_of_patient, n_samples, -1)
+    train_mat = train_features.iloc[:, 2:].to_numpy()
+    test_mat = test_features.iloc[:, 2:].to_numpy()
+    if processed:
+        train_mat = pd.read_csv("train_features_editted.csv")
+    else:
+        train_mat = reshape_mat(train_mat, num_of_patient, n_samples)
+    # test_mat = reshape_mat(test_mat, num_of_patient_test, n_samples)
+
     # as a numpy array, perform data selection
-    kept_col = data_sift(data=train_mat, num_of_patient=num_of_patient, n_samples=n_samples, threshold=0.95)
-    train_mat = train_mat[:, kept_col]
-    test_mat = test_features.iloc[:, 2:].to_numpy()[:, kept_col]
+    # kept_col = data_sift(
+    #     data=train_mat, num_of_patient=num_of_patient, n_samples=n_samples, threshold=0.95)
+    # train_mat = train_mat[:, kept_col]
+    # test_mat = test_features.iloc[:, 2:].to_numpy()[:, kept_col]
     pids = train_features.pid.to_numpy()
-    return train_mat, test_mat, pids
+    return train_mat, pids
+
+
+def reshape_mat(train_mat, num_of_patient, n_samples: int = 12):
+    h, w = train_mat.shape
+    A = np.zeros((1, n_samples*w))
+    for i in range(num_of_patient):
+        sub_train_mat = train_mat[n_samples*i:n_samples*(i+1)]
+        b = np.reshape(sub_train_mat, n_samples*w, order='F')
+        A = np.append(A, [b], axis=0)
+    np.savetxt("train_features_editted.csv", A, delimiter=",")
+    return A
 
 
 def data_sift(data: np.ndarray, num_of_patient: int, n_samples: int, threshold: float) -> List:
@@ -43,10 +64,13 @@ def data_sift(data: np.ndarray, num_of_patient: int, n_samples: int, threshold: 
     :return: The column index to be kept inside the data.
     Returning the index since the same operation is to be performed on the test data as well.
     """
-    assert num_of_patient * n_samples == data.shape[0], ValueError("The dimension of the data does not match!")
+    assert num_of_patient * \
+        n_samples == data.shape[0], ValueError(
+            "The dimension of the data does not match!")
     # check and delete the columns with one patient missing all data (12 nan in one column)
     # threshold: missing less than threshold*data.shape[0] -> still keep
-    patients = np.linspace(0, data.shape[0] - 1, num=num_of_patient).astype(int)
+    patients = np.linspace(
+        0, data.shape[0] - 1, num=num_of_patient).astype(int)
     kept_col = set([x for x in range(data.shape[1])])
     col_to_del = set()
     for p in patients:
@@ -54,7 +78,8 @@ def data_sift(data: np.ndarray, num_of_patient: int, n_samples: int, threshold: 
         for col in range(data.shape[1]):
             if col not in col_to_del and np.all(np.isnan(datablock[:, col])):
                 col_to_del.add(col)
-    still_keep_col = set(np.where(np.sum(np.isnan(data), axis=0) <= data.shape[0] * threshold)[0].tolist())
+    still_keep_col = set(np.where(
+        np.sum(np.isnan(data), axis=0) <= data.shape[0] * threshold)[0].tolist())
     kept_col = list(kept_col - (col_to_del - still_keep_col))
     return kept_col
 
@@ -103,9 +128,11 @@ if __name__ == '__main__':
                       'LABEL_Bilirubin_total', 'LABEL_Lactate', 'LABEL_TroponinI', 'LABEL_SaO2',
                       'LABEL_Bilirubin_direct', 'LABEL_EtCO2']
     st2_labels_col = ['LABEL_Sepsis']
-    st3_labels_col = ['LABEL_RRate', 'LABEL_ABPm', 'LABEL_SpO2', 'LABEL_Heartrate']
+    st3_labels_col = ['LABEL_RRate', 'LABEL_ABPm',
+                      'LABEL_SpO2', 'LABEL_Heartrate']
 
-    x_train, x_test, x_t_pid = x_data_preprocess(n_samples=12)
+    x_train, x_t_pid = x_data_preprocess(n_samples=12, processed=True)
+    print(x_train)
     y_st1, y_st2, y_st3 = y_preprocess()
 
     task1(x=x_train, y=y_st1)
