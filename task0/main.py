@@ -28,7 +28,7 @@ class ObjFuncSDG(ObjFunc):
 
 # %%
 def gradient_descent(obj_func: ObjFunc, w_init: np.ndarray, lr: float, tol: float, max_steps: int) -> Tuple[
-    np.ndarray, List, List]:
+        np.ndarray, List, List]:
     w_curr = w_init
     w_hist: List[np.ndarray] = [w_init]
     obj_hist: List[Union[float, np.ndarray]] = [obj_func(w_curr)]
@@ -80,8 +80,8 @@ def Newton(obj_func: ObjFuncSDG, w_init: np.ndarray, lr: float, tol: float, n_ep
     for epoch in range(n_epoch):
         direction: np.ndarray = obj_func.grad(w_curr, batch_idx)
         w_next = w_curr - \
-                 np.linalg.inv(obj_func.phi.T @
-                               obj_func.phi) @ direction + 0.8 * error
+            np.linalg.inv(obj_func.phi.T @
+                          obj_func.phi) @ direction + 0.8 * error
         error = w_next - w_curr
         if np.linalg.norm(w_next - w_curr) <= tol:
             print("Converged")
@@ -124,7 +124,8 @@ w_init = np.random.random(11)
 
 # Newton's method
 fitting = ObjFuncSDG(y=train_y_avg, phi=phi)
-w_res = Newton(fitting, w_init, lr=learning_rate, tol=tol, n_epoch=num_of_epochs)
+w_res = Newton(fitting, w_init, lr=learning_rate,
+               tol=tol, n_epoch=num_of_epochs)
 # parameters recover
 range_x = np.insert(range_x, 0, 1)
 w_n = range_y * w_res / range_x
