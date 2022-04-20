@@ -3,9 +3,11 @@ import pandas as pd
 
 from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor, RandomForestClassifier
+# from sklearn.svm import SVC, SVR
 import sklearn.metrics as metrics
 
 from tqdm import trange
+import time
 
 
 class Task2:
@@ -26,41 +28,82 @@ class Task2:
         
         self.st1_mdl, self.st2_mdl, self.st3_mdl = [], [], []
         self.st_mdl = [self.st1_mdl, self.st2_mdl, self.st3_mdl]
-        self.paramsGrid = [{'n_estimators': [75, 100, 125, 150, 175]}, [{'n_estimators': [100, 125, 150, 175, 200]}], []]
         
-        self.alg = [RandomForestClassifier, RandomForestClassifier, HistGradientBoostingRegressor(max_depth=3)]
+        self.paramsGrid_t = [{'n_estimators': [75, 100, 125, 150, 175]}, [{'n_estimators': [100, 125, 150, 175, 200]}], []]
+        self.alg_t = [RandomForestClassifier, RandomForestClassifier, HistGradientBoostingRegressor]
+        
+        self.paramsGrid_h = [{'max_iter': [100, 150], 'max_leaf_nodes': [31, 50]}, {}, {}]
+        self.alg_h = [HistGradientBoostingClassifier, HistGradientBoostingClassifier, HistGradientBoostingRegressor]
+        
+        # self.alg_s = [SVC, SVC, SVR]
     
-    def task(self, id, mode='param_grid_search', **kwargs):
+    def task(self, id, mode='fixed_param_train', model_group='t', **kwargs):
+        """
+        :param id: The subtask id. Can be chosen from (1, 2, 3).
+        :param mode: Specify the operating mode for the training/cross-validation/prediction. Can be chosen from 
+        ['param_grid_search', 'fixed_param_train', 'cross_validation', 'predict']
+        :param model_group: Specify the group of model/algorithms. Currently available: 't' for random forest, 'h' for histGradientBoosting, 's' for SVM-related ones (Unavailable now)
+        :param kwargs: necessary parameters for the fixed-param-train mode.
+        """
         id -= 1
         assert id in {0, 1, 2} and isinstance(id, int)
         modes = ['param_grid_search', 'fixed_param_train', 'cross_validation', 'predict']
         assert mode in modes, ValueError("The mode is invalid!")
-        print(f"\n>>Task {id + 1}<<\n")
-        # task1 [150, 175, 175, 150, 150, 175, 150, 150, 175, 175]
-        if mode == 'param_grid_search':
-            params = self.paramsGrid[id]
-            self.st_mdl[id], _ = self.__tGridSearch(id, params)
-        elif mode == 'fixed_param_train':
-            if 'num_estimators' in kwargs.keys():
-                self.__tFixedTrain(id, kwargs['num_estimators'])
-            else:
-                self.__tFixedTrain(id)
-        elif mode == 'cross_validation':
-            if 'num_estimators' in kwargs.keys():
-                self.__tCV(id, kwargs['num_estimators'])
-            else:
-                self.__tCV(id)
-        elif mode == 'predict':
-            if 'num_estimators' in kwargs.keys():
-                self.__tPredict(id, kwargs['num_estimators'])
-            else:
-                raise ValueError
+        assert model_group in ('t', 'h',)
+        
+        print(f"\n>>Task {id + 1}: {mode}<<\n")
+        # task1 rf [150, 175, 175, 150, 150, 175, 150, 150, 175, 175]
+        
+        """The following part are for the algorithm groups."""
+        
+        if model_group == 't':
+            """
+            The implementation of RandomForest approaches. But this cannot be done for the regression task
+            """
+            if mode == 'param_grid_search':
+                params = self.paramsGrid_t[id]
+                self.st_mdl[id], best_params = self.__tGridSearch(id, params)
+                print(best_params)
+            elif mode == 'fixed_param_train':
+                if 'num_estimators' in kwargs.keys():
+                    self.__tFixedTrain(id, kwargs['num_estimators'])
+                else:
+                    self.__tFixedTrain(id)
+            elif mode == 'cross_validation':
+                if 'num_estimators' in kwargs.keys():
+                    self.__tCV(id, kwargs['num_estimators'])
+                else:
+                    self.__tCV(id)
+            elif mode == 'predict':
+                if 'num_estimators' in kwargs.keys():
+                    self.__Predict(id, kwargs['num_estimators'])
+                else:
+                    raise ValueError
+        elif model_group == 'h':
+            """
+            The implementation of HistGradientBoosting approaches.
+            """
+            if mode == 'param_grid_search':
+                params = self.paramsGrid_h[id]
+                self.st_mdl[id], best_params = self.__hGridSearch(id, self.paramsGrid_h)
+                print(best_params)
+            elif mode == 'fixed_param_train':
+                self.__hFixedTrain(id)
+            elif mode == 'cross_validation':
+                self.__hCV(id)
+            elif mode == 'predict':
+                self.__Predict(id)
+    
+    def output(self):
+        self.df.to_csv('task2/prediction' + str(int(time.time()))[-5:] + '.csv', 
+                       index=False, float_format='%.3f')
+        self.df.to_csv('task2/prediction.zip', index=False, float_format='%.4f', compression='zip')
         
     def __tGridSearch(self, id, paramsDict):
         models = []
         best_params = {'n_estimators': []}
         for i in trange(len(self.st_labels_col[id])):
-            clf = GridSearchCV(RandomForestClassifier(), paramsDict, scoring='roc_auc', cv=5, n_jobs=-1)
+            clf = GridSearchCV(self.alg_t[id](), paramsDict, scoring='roc_auc', cv=5, n_jobs=-1)
             clf.fit(self.x_train, self.y_st[id][:, i])
             print(f"\nBest parameter for label {self.st_labels_col[id][i]} is {clf.best_params_}.\n")
             models.append(clf)
@@ -69,28 +112,67 @@ class Task2:
     
     def __tFixedTrain(self, id, num_estimators=[150]*10):
         assert len(num_estimators) == len(self.st_labels_col[id])
-        for i, label in enumerate(self.st1_labels_col):
-            clf = RandomForestClassifier(n_estimators=num_estimators[i])
-            clf.fit(self.x_train, self.y_st[id][:, i])
-            print(f"Score: {metrics.roc_auc_score(self.y_st[id][:, i], clf.predict_proba(self.x_train)[:, 1])}.\n")
-            self.st1_mdl.append(clf)
+        for i, label in enumerate(self.st_labels_col[id]):
+            if id in (0, 1):
+                clf = self.alg_t[id](n_estimators=num_estimators[i])
+                clf.fit(self.x_train, self.y_st[id][:, i])
+                print(f"Label {label} Score: {metrics.roc_auc_score(self.y_st[id][:, i], clf.predict_proba(self.x_train)[:, 1])}.\n")
+            else:
+                clf = self.alg_t[id](max_depth=3)
+                clf.fit(self.x_train, self.y_st[id][:, i])
+                print(f"Label {label} Score: {metrics.r2_score(self.y_st[id][:, i], clf.predict(self.x_train))}.\n")
+            self.st_mdl[id].append(clf)
             
     
     def __tCV(self, id, num_estimators=[150]*10):
         assert len(num_estimators) == len(self.st_labels_col[id])
         for i, label in enumerate(self.st_labels_col[id]):
-            clf = RandomForestClassifier(n_estimators=num_estimators[i])
+            if id in (0, 1):
+                clf = self.alg_t[id](n_estimators=num_estimators[i])
+            else:
+                clf = self.alg_t[id](max_depth=3)
             scores = cross_val_score(clf, self.x_train, self.y_st[id][:, i], cv=5, scoring='roc_auc')
             print("Label " + label + " Cross-validation score is {score:.3f},"
                   " standard deviation is {err:.3f}."
                   .format(score=scores.mean(), err=scores.std()))
     
-    def __tPredict(self, id, num_estimators):
+    def __Predict(self, id):
+        assert self.st_mdl[id] is not None
         for i, label in enumerate(self.st_labels_col[id]):
             clf = self.st_mdl[id][i]
-            predictions = clf.predict_proba(self.x_test)[:, 1]
+            predictions = clf.predict_proba(self.x_test)[:, 1] if id in (0, 1) else clf.predict(self.x_test)
             self.df[label] = predictions
-        
+        print("--Prediction Finished!--")
+    
+    def __hGridSearch(self, id, paramsDict):
+        models = []
+        best_params = {'max_iter': [], 'max_leaf_nodes': [],}
+        for i in trange(len(self.st_labels_col[id])):
+            clf = GridSearchCV(self.alg_h[id](), paramsDict, scoring='roc_auc', cv=5, n_jobs=-1)
+            clf.fit(self.x_train, self.y_st[id][:, i])
+            print(f"\nBest parameter for label {self.st_labels_col[id][i]} is {clf.best_params_}.\n")
+            models.append(clf)
+            best_params['max_iter'].append(clf.best_params_['max_iter'])
+            best_params['max_leaf_nodes'].append(clf.best_params_['max_leaf_nodes'])
+        return models, best_params
+    
+    def __hFixedTrain(self, id):
+        for i, label in enumerate(self.st_labels_col[id]):
+            clf = self.alg_h[id]()
+            clf.fit(self.x_train, self.y_st[id][:, i])
+            if id in (0, 1):
+                print(f"Label {label} Score: {metrics.roc_auc_score(self.y_st[id][:, i], clf.predict_proba(self.x_train)[:, 1])}.\n")
+            else:
+                print(f"Label {label} Score: {metrics.r2_score(self.y_st[id][:, i], clf.predict(self.x_train))}.\n")
+            self.st_mdl[id].append(clf)
+    
+    def __hCV(self, id):
+        for i, label in enumerate(self.st_labels_col[id]):
+            clf = self.alg_h[id]()
+            scores = cross_val_score(clf, self.x_train, self.y_st[id][:, i], cv=5, scoring='roc_auc')
+            print("Label " + label + " Cross-validation score is {score:.3f},"
+                  " standard deviation is {err:.3f}."
+                  .format(score=scores.mean(), err=scores.std()))
 
     def x_data_preprocess(self, filename, n_samples: int = 12):
         x_features = pd.read_csv(filename)
@@ -128,4 +210,13 @@ class Task2:
 if __name__ == '__main__':
     task2 = Task2()
     # task2.task(2, mode='param_grid_search')
-    task2.task(2, mode='cross_validation', num_estimators=[150])
+    # task2.task(2, mode='param_grid_search', model_group='h')
+    # task2.task(3, mode='fixed_param_train', model_group='h')
+    # task2.task(3, mode='predict', model_group='h')
+    # task2.task(2, mode='cross_validation', num_estimators=[150])
+    # task2.task(1, mode='fixed_param_train', model_group='h')
+    
+    for i in (1, 2, 3):
+        task2.task(i, mode='fixed_param_train', model_group='h')
+        task2.task(i, mode='predict', model_group='h')
+    # task2.output()
