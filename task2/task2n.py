@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import os
 
 from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor, RandomForestClassifier
@@ -19,9 +20,15 @@ class Task2:
         self.st3_labels_col = ['LABEL_RRate',
                                'LABEL_ABPm', 'LABEL_SpO2', 'LABEL_Heartrate']
         self.st_labels_col = [self.st1_labels_col, self.st2_labels_col, self.st3_labels_col]
-        self.x_train, self.x_t_pid = self.x_data_preprocess('task2/train_features.csv', n_samples=12)
-        self.x_test, self.x_test_pid = self.x_data_preprocess('task2/test_features.csv', n_samples=12)
-        self.y_st1, self.y_st2, self.y_st3 = self.y_data_preprocess('task2/train_labels.csv')
+        
+        self.datasets = ['train_features.csv', 'test_features.csv', 'train_labels.csv']
+        self.direprefix = ''
+        self.check_dataset_loc()
+        
+        self.x_train_mean, self.x_train_std = None, None
+        self.x_train, self.x_t_pid = self.x_data_preprocess(self.datasets[0], n_samples=12)
+        self.x_test, self.x_test_pid = self.x_data_preprocess(self.datasets[1], n_samples=12)
+        self.y_st1, self.y_st2, self.y_st3 = self.y_data_preprocess(self.datasets[2])
         self.y_st = [self.y_st1, self.y_st2, self.y_st3]
         
         self.df = pd.DataFrame({'pid': self.x_test_pid})
@@ -95,9 +102,9 @@ class Task2:
                 self.__Predict(id)
     
     def output(self):
-        self.df.to_csv('task2/prediction' + str(int(time.time()))[-5:] + '.csv', 
+        self.df.to_csv(self.direprefix + 'prediction' + str(int(time.time()))[-5:] + '.csv', 
                        index=False, float_format='%.3f')
-        self.df.to_csv('task2/prediction.zip', index=False, float_format='%.4f', compression='zip')
+        self.df.to_csv(self.direprefix + 'prediction', index=False, float_format='%.4f', compression='zip')
         
     def __tGridSearch(self, id, paramsDict):
         models = []
@@ -133,8 +140,7 @@ class Task2:
                 clf = self.alg_t[id](max_depth=3)
             scores = cross_val_score(clf, self.x_train, self.y_st[id][:, i], cv=5, scoring='roc_auc')
             print("Label " + label + " Cross-validation score is {score:.3f},"
-                  " standard deviation is {err:.3f}."
-                  .format(score=scores.mean(), err=scores.std()))
+                  " standard deviation is {err:.3f}.".format(score=scores.mean(), err=scores.std()))
     
     def __Predict(self, id):
         assert self.st_mdl[id] is not None
@@ -171,9 +177,25 @@ class Task2:
             clf = self.alg_h[id]()
             scores = cross_val_score(clf, self.x_train, self.y_st[id][:, i], cv=5, scoring='roc_auc')
             print("Label " + label + " Cross-validation score is {score:.3f},"
-                  " standard deviation is {err:.3f}."
-                  .format(score=scores.mean(), err=scores.std()))
+                  " standard deviation is {err:.3f}.".format(score=scores.mean(), err=scores.std()))
 
+    def check_dataset_loc(self):
+        dire = os.listdir()
+        is_dataset_in_dir = [True if x in dire else False for x in self.datasets]
+        if False in is_dataset_in_dir:
+            self.direprefix = 'task2/'
+            dire = os.listdir(self.direprefix)
+            is_dataset_in_dir = [True if x in dire else False for x in self.datasets]
+            if False not in is_dataset_in_dir:
+                self.datasets = [self.direprefix + x for x in self.datasets]
+                return;
+            else:
+                raise ValueError("Datasets are not found! Check the paths!")
+        else:
+            return;
+            
+        
+    
     def x_data_preprocess(self, filename, n_samples: int = 12):
         x_features = pd.read_csv(filename)
         num_of_patient = x_features.pid.nunique()  # number of patients
@@ -186,7 +208,11 @@ class Task2:
             num_of_patient, n_samples, x_mat.shape[-1]), 1, 2).reshape(num_of_patient, -1)
 
         # standardize
-        x_mat = self.standardize_mat(x_mat)
+        if self.x_train_mean is None:
+            # this means the training set
+            x_mat, self.x_train_mean, self.x_train_std = self.standardize_mat(x_mat)
+        else:
+            x_mat = self.standardize_mat(x_mat, mean=self.x_train_mean, std=self.x_train_std)
         
         pids = x_features.pid.to_numpy()
         pids, ind = np.unique(pids, return_index=True)
@@ -199,12 +225,27 @@ class Task2:
         return st1_gt.to_numpy(), st2_gt.to_numpy(), st3_gt.to_numpy()
     
     @staticmethod
-    def standardize_mat(x):
-        for col in range(x.shape[1]):
-            x[np.where(np.isnan(x[:, col])), col] = np.nanmean(x[:, col])  # fill col mean values into the nans
-            
-            x[:, col] = (x[:, col] - np.mean(x[:, col])) / np.std(x[:, col])
-        return x
+    def standardize_mat(x, **kwargs):
+        if kwargs == {}:
+            mean, std = [], []
+            for col in range(x.shape[1]):
+                x[np.where(np.isnan(x[:, col])), col] = np.nanmean(x[:, col])  # fill col mean values into the nans
+                
+                mean_col = np.mean(x[:, col])
+                std_col = np.std(x[:, col])
+                x[:, col] = (x[:, col] - mean_col) / std_col
+                mean.append(mean_col)
+                std.append(std_col)
+            return x, mean, std
+        else:
+            assert 'mean' in kwargs.keys() and 'std' in kwargs.keys()
+            mean = kwargs['mean']
+            std = kwargs['std']
+            for col in range(x.shape[1]):
+                x[np.where(np.isnan(x[:, col])), col] = np.nanmean(x[:, col])  # fill col mean values into the nans
+                
+                x[:, col] = (x[:, col] - mean[col]) / std[col]
+            return x
 
 
 if __name__ == '__main__':
@@ -219,4 +260,4 @@ if __name__ == '__main__':
     for i in (1, 2, 3):
         task2.task(i, mode='fixed_param_train', model_group='h')
         task2.task(i, mode='predict', model_group='h')
-    # task2.output()
+    task2.output()
