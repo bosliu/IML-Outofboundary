@@ -4,8 +4,10 @@ import os
 
 from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor, RandomForestClassifier
-# from sklearn.svm import SVC, SVR
+from sklearn.impute import SimpleImputer
 import sklearn.metrics as metrics
+
+from lightgbm import LGBMClassifier, LGBMRegressor
 
 from tqdm import trange
 import time
@@ -42,23 +44,25 @@ class Task2:
         self.paramsGrid_h = [{'max_iter': [100, 150], 'max_leaf_nodes': [31, 50]}, {}, {}]
         self.alg_h = [HistGradientBoostingClassifier, HistGradientBoostingClassifier, HistGradientBoostingRegressor]
         
+        self.alg_l = [LGBMClassifier, LGBMClassifier, LGBMRegressor]
+        
         # self.alg_s = [SVC, SVC, SVR]
     
-    def task(self, id, mode='fixed_param_train', model_group='t', **kwargs):
+    def task(self, id, mode='fixed_param_train', model_group='h', **kwargs):
         """
         :param id: The subtask id. Can be chosen from (1, 2, 3).
         :param mode: Specify the operating mode for the training/cross-validation/prediction. Can be chosen from 
         ['param_grid_search', 'fixed_param_train', 'cross_validation', 'predict']
-        :param model_group: Specify the group of model/algorithms. Currently available: 't' for random forest, 'h' for histGradientBoosting, 's' for SVM-related ones (Unavailable now)
+        :param model_group: Specify the group of model/algorithms. Currently available: 't' for random forest, 'h' for histGradientBoosting, 'l' for LGBM classifier and regressor, 's' for SVM-related ones (Unavailable now)
         :param kwargs: necessary parameters for the fixed-param-train mode.
         """
         id -= 1
         assert id in {0, 1, 2} and isinstance(id, int)
         modes = ['param_grid_search', 'fixed_param_train', 'cross_validation', 'predict']
         assert mode in modes, ValueError("The mode is invalid!")
-        assert model_group in ('t', 'h',)
+        assert model_group in ('t', 'h', 'l')
         
-        print(f"\n>>Task {id + 1}: {mode}<<\n")
+        print(f"\n>> Task {id + 1}: {mode} <<\n")
         # task1 rf [150, 175, 175, 150, 150, 175, 150, 150, 175, 175]
         
         """The following part are for the algorithm groups."""
@@ -100,11 +104,22 @@ class Task2:
                 self.__hCV(id)
             elif mode == 'predict':
                 self.__Predict(id)
+        elif model_group == 'l':
+            if mode == 'param_grid_search':
+                raise NotImplementedError("This is not implemented yet!")
+            elif mode == 'fixed_param_train':
+                self.__lFixedTrain(id)
+            elif mode == 'cross_validation':
+                self.__lCV(id)
+            elif mode == 'predict':
+                self.__Predict(id)
+        
+        print(f">>> Task {id + 1} finished! <<<")
     
     def output(self):
         self.df.to_csv(self.direprefix + 'prediction' + str(int(time.time()))[-5:] + '.csv', 
                        index=False, float_format='%.3f')
-        self.df.to_csv(self.direprefix + 'prediction', index=False, float_format='%.4f', compression='zip')
+        self.df.to_csv(self.direprefix + 'prediction.zip', index=False, float_format='%.4f', compression='zip')
         
     def __tGridSearch(self, id, paramsDict):
         models = []
@@ -129,8 +144,7 @@ class Task2:
                 clf.fit(self.x_train, self.y_st[id][:, i])
                 print(f"Label {label} Score: {metrics.r2_score(self.y_st[id][:, i], clf.predict(self.x_train))}.\n")
             self.st_mdl[id].append(clf)
-            
-    
+             
     def __tCV(self, id, num_estimators=[150]*10):
         assert len(num_estimators) == len(self.st_labels_col[id])
         for i, label in enumerate(self.st_labels_col[id]):
@@ -148,7 +162,7 @@ class Task2:
             clf = self.st_mdl[id][i]
             predictions = clf.predict_proba(self.x_test)[:, 1] if id in (0, 1) else clf.predict(self.x_test)
             self.df[label] = predictions
-        print("--Prediction Finished!--")
+        print("--Prediction Finished!--\n")
     
     def __hGridSearch(self, id, paramsDict):
         models = []
@@ -175,7 +189,30 @@ class Task2:
     def __hCV(self, id):
         for i, label in enumerate(self.st_labels_col[id]):
             clf = self.alg_h[id]()
-            scores = cross_val_score(clf, self.x_train, self.y_st[id][:, i], cv=5, scoring='roc_auc')
+            if id in (0, 1):
+                scores = cross_val_score(clf, self.x_train, self.y_st[id][:, i], cv=5, scoring='roc_auc')
+            else:
+                scores = cross_val_score(clf, self.x_train, self.y_st[id][:, i], cv=5, scoring='r2')
+            print("Label " + label + " Cross-validation score is {score:.3f},"
+                  " standard deviation is {err:.3f}.".format(score=scores.mean(), err=scores.std()))
+    
+    def __lFixedTrain(self, id):
+        for i, label in enumerate(self.st_labels_col[id]):
+            clf = self.alg_l[id]()
+            clf.fit(self.x_train, self.y_st[id][:, i])
+            if id in (0, 1):
+                print(f"Label {label} Score: {metrics.roc_auc_score(self.y_st[id][:, i], clf.predict_proba(self.x_train)[:, 1])}.\n")
+            else:
+                print(f"Label {label} Score: {metrics.r2_score(self.y_st[id][:, i], clf.predict(self.x_train))}.\n")
+            self.st_mdl[id].append(clf)
+    
+    def __lCV(self, id):
+        for i, label in enumerate(self.st_labels_col[id]):
+            clf = self.alg_l[id]()
+            if id in (0, 1):
+                scores = cross_val_score(clf, self.x_train, self.y_st[id][:, i], cv=5, scoring='roc_auc')
+            else:
+                scores = cross_val_score(clf, self.x_train, self.y_st[id][:, i], cv=5, scoring='r2')
             print("Label " + label + " Cross-validation score is {score:.3f},"
                   " standard deviation is {err:.3f}.".format(score=scores.mean(), err=scores.std()))
 
@@ -193,10 +230,9 @@ class Task2:
                 raise ValueError("Datasets are not found! Check the paths!")
         else:
             return;
-            
-        
     
-    def x_data_preprocess(self, filename, n_samples: int = 12):
+    def x_data_preprocess(self, filename, n_samples: int = 12, use_train_set_standarize: bool = False, use_self_impute: bool = False):
+        print(f">>> Preprocessing data from {filename} <<<\n")
         x_features = pd.read_csv(filename)
         num_of_patient = x_features.pid.nunique()  # number of patients
 
@@ -204,15 +240,21 @@ class Task2:
         x_mat = x_features.iloc[:, 2:].to_numpy()
 
         # expand features at different time into new features
-        x_mat = np.swapaxes(x_mat.reshape(
-            num_of_patient, n_samples, x_mat.shape[-1]), 1, 2).reshape(num_of_patient, -1)
+        if use_self_impute:
+            x_mat = self.selfimpute(x_mat.reshape(num_of_patient, n_samples, x_mat.shape[-1]))
+            x_mat = np.swapaxes(x_mat, 1, 2).reshape(num_of_patient, -1)
+        else:
+            x_mat = np.swapaxes(x_mat.reshape(num_of_patient, n_samples, x_mat.shape[-1]), 1, 2).reshape(num_of_patient, -1)
 
         # standardize
-        if self.x_train_mean is None:
-            # this means the training set
-            x_mat, self.x_train_mean, self.x_train_std = self.standardize_mat(x_mat)
+        if use_train_set_standarize:
+            if self.x_train_mean is None:
+                # this means the training set
+                x_mat, self.x_train_mean, self.x_train_std = self.standardize_mat(x_mat)
+            else:
+                x_mat = self.standardize_mat(x_mat, mean=self.x_train_mean, std=self.x_train_std)
         else:
-            x_mat = self.standardize_mat(x_mat, mean=self.x_train_mean, std=self.x_train_std)
+            x_mat, _, _ = self.standardize_mat(x_mat)
         
         pids = x_features.pid.to_numpy()
         pids, ind = np.unique(pids, return_index=True)
@@ -247,15 +289,26 @@ class Task2:
                 x[:, col] = (x[:, col] - mean[col]) / std[col]
             return x
 
+    @staticmethod
+    def selfimpute(x):
+        # x: num_of_pat * num_of_samples * num of features
+        for pat in range(x.shape[0]):
+            for col in range(x.shape[2]):
+                if np.all(np.isnan(x[pat, :, col])):
+                    continue
+                if True in np.isnan(x[pat, :, col]):
+                    imp = SimpleImputer(strategy="mean")
+                    x[pat, :, col:col+1] = imp.fit_transform(X=x[pat, :, col:col+1])
+                else:
+                    continue
+        return x
+
 
 if __name__ == '__main__':
     task2 = Task2()
-    # task2.task(2, mode='param_grid_search')
-    # task2.task(2, mode='param_grid_search', model_group='h')
+    
+    # task2.task(3, mode='cross_validation', model_group='h')
     # task2.task(3, mode='fixed_param_train', model_group='h')
-    # task2.task(3, mode='predict', model_group='h')
-    # task2.task(2, mode='cross_validation', num_estimators=[150])
-    # task2.task(1, mode='fixed_param_train', model_group='h')
     
     for i in (1, 2, 3):
         task2.task(i, mode='fixed_param_train', model_group='h')
