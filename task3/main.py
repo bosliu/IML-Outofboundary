@@ -366,17 +366,25 @@ if __name__ == '__main__':
     parser.add_argument('--no_validation', action="store_true")
     parser.add_argument('--validation_prop', type=float, required=False, default=VALIDATION_PROP)
     parser.add_argument('--load', action="store_true")
+    parser.add_argument('--model_path', type=str, default=MODEL_PATH)
+    parser.add_argument('--model_filename', type=str, default=MODEL_FILE_NAME)
     parser.add_argument('--test', action="store_true")
     parser.add_argument('--batch_size', type=int, required=False, default=BATCH_SIZE)
     parser.add_argument('--lr', type=float, required=False, default=LR)
     parser.add_argument('--epochs', type=int, required=False, default=EPOCHS)
     args = parser.parse_args()
     
-    TRAIN = args.train
     VALIDATION = not args.no_validation
-    assert 0 < args.validation_prop and args.validation_prop < 1, ValueError("Wrong validation proportion!")
-    VALIDATION_PROP = args.validation_prop
+    if VALIDATION:
+        assert 0 < args.validation_prop and args.validation_prop < 1, ValueError("Wrong validation proportion!")
+        VALIDATION_PROP = args.validation_prop
     LOAD_MODEL = args.load
+    if LOAD_MODEL:
+        TRAIN = False
+        MODEL_PATH = args.model_path
+        MODEL_FILE_NAME = args.model_filename
+    else:
+        TRAIN = args.train
     TEST = args.test
     BATCH_SIZE = args.batch_size
     EPOCHS = args.epochs
