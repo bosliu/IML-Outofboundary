@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass
 from PIL import Image
 
+import argparse
+
 from typing import Generator, List, Optional
 
 """
@@ -25,6 +27,10 @@ from typing import Generator, List, Optional
        |---- food
             |
             |---- *.jpg (Images)
+            |
+            |---- processed
+                |
+                |---- *.jpg (Images, Processed)
    
 """
 # hyperparams
@@ -34,6 +40,13 @@ VALIDATION_PROP = 0.15
 TRAIN_LABEL_TRIPLETS_PROP = 1
 
 BATCH_SIZE = 64
+LR = 0.001
+EPOCHS = 15
+TRAIN = True
+LOAD_MODEL = False
+MODEL_PATH = 'trained_models/'
+MODEL_FILE_NAME = 'model_epoch_10.pth'
+TEST = False
 
 class Preprocess:
     def __init__(self, img_path, lbl_path, use_preprocessed_img=True) -> None:
@@ -44,6 +57,7 @@ class Preprocess:
             self.img_path = processed_img_path
             try:
                 assert len(os.listdir(processed_img_path)) == len([f for f in os.listdir(img_path) if f.endswith('.jpg')])
+                print("Processed images found at:" + self.img_path)
             except:
                 self.to_perform = True
         else:
@@ -70,7 +84,7 @@ class Preprocess:
     def load_img(self, out=False) -> Optional[List[np.ndarray]]:
         images = []
         state = " Loading images " if not self.to_perform else " Loading and Preprocessing images "
-        print("---------->>" + state + "<<----------")
+        print("\n---------->>" + state + "<<----------")
         pb = tqdm(total=self.img_num, desc=state, position=0)
         for i, im in enumerate(self.jpg_gen()):
             im = cv.imread(os.path.join(self.img_path, im))
@@ -80,10 +94,10 @@ class Preprocess:
         self.images = images
         if out:
             return self.images
-        print(f"Finished with {len(self.images)} images.")
+        print(f"\nFinished with {len(self.images)} images.")
 
     def read_labels(self):
-        print("---------- Reading labels ----------")
+        print("\n---------- Reading labels ----------")
         train_triplets = []
         test_triplets = []
         with open(self.lbl_path + '/train_triplets.txt', 'r') as f:
@@ -142,7 +156,7 @@ class FoodDataSet(Dataset):
 
 class NeuralNet(nn.Module):
     EMBEDDING_DIM = 64
-    def __init__(self, inp: int = 2208, hidden: int = 768, hidden_2: int = 400, d: float = 0.2):
+    def __init__(self, inp: int = 2208, hidden: int = 384, hidden_2: int = 128, d: float = 0.2):
         super().__init__()
         self.fc = nn.Sequential(
             nn.Flatten(),
@@ -257,7 +271,7 @@ def train(model, optimizer, train_loader, criterion, batch_size, epochs,
     batch_num = len(train_loader)
     pbar = tqdm(desc='Training', total=epochs * batch_num, leave=False)
     
-    model_path = os.path.join(path, 'trained_models')
+    model_path = os.path.join(path, MODEL_PATH)
     if not os.path.exists(model_path):
         print(".... Making dir at " + str(model_path))
         os.mkdir(model_path)
@@ -265,7 +279,7 @@ def train(model, optimizer, train_loader, criterion, batch_size, epochs,
     if val_loader:
         val_acc = 0
     for epoch in range(epochs):
-        print("---------- Starting Training ----------")
+        print("\n>>>> Training")
         pbar.write(f"Epoch {epoch + 1} / {epochs}")
         model.train()
         losses = AverageMeter('Loss', ':.3f')
@@ -294,10 +308,11 @@ def train(model, optimizer, train_loader, criterion, batch_size, epochs,
 
             # do validation here to follow the training process
         if epoch % 2 == 0 and val_loader:
-            print("---------- Starting Validation ----------")
+            print("\n>>>> Validation")
             model.eval()
             with torch.no_grad():
                 correct = 0
+                best_epoch = -1
                 for (ima, imb, imc) in val_loader:
                     ima = ima.to(device)
                     imb = imb.to(device)
@@ -307,35 +322,65 @@ def train(model, optimizer, train_loader, criterion, batch_size, epochs,
                     pred_labels = closest_image(*out).detach().cpu().numpy()
                     correct += np.sum((pred_labels == np.ones_like(pred_labels)).astype(np.uint8))
                 curr_acc = correct / len(validation_set)
-                print(f"\nCurrent accuracy for the validation data is {curr_acc}.")
+                print(f"\nCurrent accuracy for the validation data is {curr_acc:.3f} with.")
                 if val_acc < curr_acc:
                     val_acc = curr_acc
-                # torch.save(model.state_dict(), os.path.join(model_path, model_name + f'_better_valacc_at_epoch_{epoch}.pth'))
-        torch.save(model.state_dict(), os.path.join(model_path, model_name + f'_epoch_{epoch}.pth'))
+                    best_epoch = epoch + 1
+                    torch.save(model.state_dict(), os.path.join(model_path, model_name + f'_better_valacc_at_epoch_{epoch+1}.pth'))
+        torch.save(model.state_dict(), os.path.join(model_path, model_name + f'_epoch_{epoch+1}.pth'))
         pbar.refresh()
+    print("\n---------->> Training Results <<----------")
+    print(f"Epochs finished {epoch + 1} / {epochs}.")
+    if val_loader:
+        print(f"Best validation accuracy achieved at {best_epoch} with {curr_acc:.3f}.")
+    print("Models are saved at " + model_path)
+    
 
-
-def predict(model, predict_set):
+def predict(model, test_loader):
+    print("\n>>>> Prediction")
     """Predict 0/1 for the given predict_set (Dataset)"""
-    predict_set_choices = []
+    choices = np.array([])
     # List of tuples which the model chose as most similar
     model.eval()
     with torch.no_grad():
-        for anchor_img, positive_img, negative_img in tqdm(predict_set.generate_batches(BATCH_SIZE, shuffle=False, drop_last=False), leave=True, total=len(predict_set) // BATCH_SIZE):
+        for (ima, imb, imc) in tqdm(test_loader, leave=True, total= len(test_loader)):
             # Get embeddings from our model
-            anchor_emb = model(anchor_img)
-            positive_emb = model(positive_img)
-            negative_emb = model(negative_img)
-
+            ima = ima.to(device)
+            imb = imb.to(device)
+            imc = imc.to(device)
+            im = (ima, imb, imc)
+            out = tuple(map(model, im))
             # Compute distances and the corresponding labels
-            labels = closest_image(anchor_emb, positive_emb, negative_emb)
+            labels = closest_image(*out).detach().cpu().numpy()
 
-            predict_set_choices.append(labels.cpu().numpy())
-    result = np.array(predict_set_choices).flatten()
-    return np.concatenate(result).ravel()
+            choices = np.concatenate((choices, labels.reshape(-1))).reshape(-1)
+    # result = np.array(choices).flatten()
+    # return np.concatenate(result).ravel()
+    return choices.astype(np.uint8).tolist()
 
 
 if __name__ == '__main__':
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--train', action="store_true")
+    parser.add_argument('--no_validation', action="store_true")
+    parser.add_argument('--validation_prop', type=float, required=False, default=VALIDATION_PROP)
+    parser.add_argument('--load', action="store_true")
+    parser.add_argument('--test', action="store_true")
+    parser.add_argument('--batch_size', type=int, required=False, default=BATCH_SIZE)
+    parser.add_argument('--lr', type=float, required=False, default=LR)
+    parser.add_argument('--epochs', type=int, required=False, default=EPOCHS)
+    args = parser.parse_args()
+    
+    TRAIN = args.train
+    VALIDATION = not args.no_validation
+    assert 0 < args.validation_prop and args.validation_prop < 1, ValueError("Wrong validation proportion!")
+    VALIDATION_PROP = args.validation_prop
+    LOAD_MODEL = args.load
+    TEST = args.test
+    BATCH_SIZE = args.batch_size
+    EPOCHS = args.epochs
+    
     global path
     path = os.getcwd()
     if 'dataset' not in os.listdir():
@@ -361,7 +406,7 @@ if __name__ == '__main__':
     feature_extract = True
     model_type = 'densenet'
     model_pretrained, input_size = initialize_model(model_type, feature_extract, use_pretrained=True)
-    print("---------->> Pre-trained Model <<----------")
+    print("\n---------- Pre-trained Model ----------")
     # print(model_pretrained)
     
     model_pretrained = model_pretrained.to(device)
@@ -393,18 +438,38 @@ if __name__ == '__main__':
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
-    train_set = FoodDataSet(train_triplets, transform=train_tf)
+    if TRAIN:
+        train_set = FoodDataSet(train_triplets, transform=train_tf)
+        train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=False, drop_last=False)
+        
+    valid_loader = None
     if VALIDATION:
         validation_tf = train_tf
         validation_set = FoodDataSet(validation_triplets, transform=validation_tf)
-    test_tf = validation_tf
-    test_set = FoodDataSet(test_triplets, transform=test_tf)
+        valid_loader = DataLoader(validation_set, batch_size=BATCH_SIZE*2, shuffle=False, drop_last=False)
+        
+    if TEST:
+        test_tf = validation_tf
+        test_set = FoodDataSet(test_triplets, transform=test_tf)
+        test_loader = DataLoader(test_set, batch_size=BATCH_SIZE*2, shuffle=False, drop_last=False)
     
-    train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=False, drop_last=False)
-    valid_loader = DataLoader(validation_set, batch_size=BATCH_SIZE, shuffle=False, drop_last=False) if VALIDATION else None
-    test_loader = DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, drop_last=False)
-    
-    optimizer = torch.optim.Adam(params_to_update, lr=0.001)
+    optimizer = torch.optim.Adam(params_to_update, lr=LR)
     criterion = nn.TripletMarginLoss(margin=0.5)
-    train(model=model_pretrained, optimizer=optimizer, train_loader=train_loader, criterion=criterion, 
-          batch_size=BATCH_SIZE, epochs=20, model_name='model', is_inception=False, val_loader=valid_loader)
+    
+    if TRAIN:
+        train(model=model_pretrained, optimizer=optimizer, train_loader=train_loader, criterion=criterion, 
+            batch_size=BATCH_SIZE, epochs=EPOCHS, model_name='model', is_inception=False, val_loader=valid_loader)
+    
+    if LOAD_MODEL:
+        try:
+            model_pretrained.load_state_dict(torch.load(os.path.join(path, MODEL_PATH + MODEL_FILE_NAME)))
+        except:
+            ValueError("Wrong load configuration!")
+    
+    if TEST:
+        results = predict(model=model_pretrained, test_loader=test_loader)
+        with open(os.path.join(path, 'prediction.txt'), 'w') as f:
+            for r in results:
+                s = ''.join(str(r))
+                f.write(s + '\n')
+        print("Output completed as " + str(os.path.join(path, 'prediction.txt')))
