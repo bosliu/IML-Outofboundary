@@ -141,3 +141,5 @@ test.py
 .vscode/
 
 /task3/dataset/
+/task4/data
+.pdf
