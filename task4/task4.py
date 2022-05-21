@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, random_split
 from tqdm import tqdm
 from dataclasses import dataclass
+from copy import deepcopy
 import random
 import csv
 
@@ -28,11 +29,13 @@ class Data:
             dpath, 'test_features.csv')).to_numpy()[:, 2:].astype(float)
         self.test_ID = pd.read_csv(os.path.join(
             dpath, 'test_features.csv')).to_numpy()[:, 0]
+        
+        self.all_features = np.vstack((self.pfeatures, self.tfeatures, self.testfeatures))
 
 
 class AutoEncoder(nn.Module):
     def __init__(self):
-        self.Encoded_dim = 128
+        self.Encoded_dim = ENCODING_DIM
         super().__init__()
         self.encoder = nn.Sequential(
             nn.Linear(in_features=1000, out_features=512),
@@ -40,7 +43,6 @@ class AutoEncoder(nn.Module):
             nn.Linear(in_features=512, out_features=256),
             nn.PReLU(),
             nn.Linear(in_features=256, out_features=self.Encoded_dim),
-            # nn.PReLU(),
         )
         self.decoder = nn.Sequential(
             nn.Linear(in_features=self.Encoded_dim, out_features=256),
@@ -59,29 +61,48 @@ class AutoEncoder(nn.Module):
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super(NeuralNetwork, self).__init__()
-        self.linear_relu_stack = nn.Sequential(
-            # nn.Linear(in_features=128, out_features=128),
-            # nn.PReLU(),
+        # self.linear_relu_stack = nn.Sequential(
+        #     # nn.Linear(in_features=128, out_features=128),
+        #     # nn.PReLU(),
+        #     # nn.Dropout(p=0.2),
+        #     nn.Linear(in_features=128, out_features=64),
+        #     nn.PReLU(),
+        #     nn.Dropout(p=0.2),
+        #     nn.Linear(in_features=64, out_features=32),
+        #     nn.PReLU(),
+        #     nn.Dropout(p=0.2),
+        #     nn.Linear(32, 1)
+        # )
+        self.layer1 = nn.Sequential(
+            nn.Linear(ENCODING_DIM, 128),
+            nn.PReLU(),
+        )
+        self.layer2 = nn.Sequential(
             # nn.Dropout(p=0.2),
-            nn.Linear(in_features=128, out_features=64),
-            nn.PReLU(),
+            # nn.Linear(128, 64),
+            # nn.PReLU(),
+            nn.Identity(),  # placeholder
+        )
+        self.layer3 = nn.Sequential(
             nn.Dropout(p=0.2),
-            nn.Linear(in_features=64, out_features=32),
+            nn.Linear(128, 64),
             nn.PReLU(),
-            nn.Dropout(p=0.2),
-            nn.Linear(32, 1)
+        )
+        self.layer4 = nn.Sequential(
+            # nn.Dropout(p=0.2),
+            nn.Linear(64, 1),
+            nn.PReLU(),
         )
 
     def forward(self, x):
-        outputs = self.linear_relu_stack(x)
-        return outputs
+        return self.layer4(self.layer3(self.layer2(self.layer1(x))))
 
 
 class MoleculeDataSet(Dataset):
     def __init__(self, Data, Data_reduced, mode):
         self.mode = mode
         if self.mode == 'AE':
-            self.inp = Data.pfeatures
+            self.inp = Data.all_features
         elif self.mode == 'pretrain':
             self.inp = Data_reduced
             self.oup = Data.plabels
@@ -138,10 +159,10 @@ def train(model, epochs, train_loader, validation_loader, optimizer, scheduler, 
     pbar = tqdm(desc='Training', total=epochs * len(train_loader), leave=False)
     losses_val_hist = 1e3 if validation_loader else None
     val_loss_inc_epochs, val_loss_inc_epochs_max = 0, 5
+    model_best = None
     for epoch in range(epochs):
         model.train()
         losses = AverageMeter('Loss', ':.3e')
-        print(f"\n -- Epoch {epoch + 1} / {epochs} --")
         if mode == "AE":
             for x in train_loader:
                 x_ = x["inp"].float().to(device)
@@ -161,8 +182,7 @@ def train(model, epochs, train_loader, validation_loader, optimizer, scheduler, 
         elif mode == "train":
             for i, batch in enumerate(train_loader):
                 pbar.set_description_str(f'Epoch {epoch + 1}')
-                x_train, y_train = batch['inp'].to(
-                    device), batch['oup'].to(device)
+                x_train, y_train = batch['inp'].to(device), batch['oup'].to(device)
                 output = model(x_train.float())
                 loss = loss_function(output, y_train.float())
 
@@ -175,6 +195,8 @@ def train(model, epochs, train_loader, validation_loader, optimizer, scheduler, 
                 pbar.update()
             outputs.append((epoch, y_train.float(), output))
             # print(outputs)
+        if loss.item() > 1e2:
+            raise Exception("‼ Abnormal loss ‼")
         # validation
         pbar.refresh()
         if validation_loader:
@@ -186,32 +208,33 @@ def train(model, epochs, train_loader, validation_loader, optimizer, scheduler, 
                     reconstructed = model(x_)
                     loss = loss_function(reconstructed, x_)
                     losses_val.update(loss.item(), x_.shape[0])
-                elif mode == "pretrain":
-                    x_train, y_train = batch['inp'].to(
-                        device), batch['oup'].to(device)
+                elif mode == "train":
+                    x_train, y_train = batch['inp'].to(device), batch['oup'].to(device)
                     output = model(x_train.float())
                     loss = loss_function(output, y_train.float())
                     losses_val.update(loss.item(), x_train.shape[0])
-            print("\nValidation average loss {:.3e}.".format(losses_val.avg))
+            print("  Validation average loss {:.3e}.".format(losses_val.avg))
             if losses_val.avg > losses_val_hist:
                 val_loss_inc_epochs += 1
-                print(
-                    f"Detected increasing validation loss! Stop training if continuing increasing for {val_loss_inc_epochs_max - val_loss_inc_epochs} epochs!")
+                print(f"Detected increasing validation loss! Stop training if continuing increasing for {val_loss_inc_epochs_max - val_loss_inc_epochs} epochs!")
             else:
                 val_loss_inc_epochs = 0
-            if to_save:
-                ckpt = {
-                    'epoch': epoch,
-                    'model_state': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'scheduler': scheduler.state_dict() if scheduler else None,
-                }
-                save_checkpoint(ckpt, str(mode) + 'best.pth')
+                model_best = deepcopy(model)
+                losses_val_hist = losses_val.avg
+            if val_loss_inc_epochs >= val_loss_inc_epochs_max:
+                break
 
-            losses_val_hist = losses_val.avg
         if scheduler is not None:
             scheduler.step()
-    return outputs
+        if to_save:
+            ckpt = {
+                'epoch': epoch,
+                'model_state': model_best.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict() if scheduler else None,
+            }
+            save_checkpoint(ckpt, str(mode) + 'best.pth')
+    return outputs, model_best
 
 
 def save_checkpoint(state, filename):
@@ -220,10 +243,11 @@ def save_checkpoint(state, filename):
 
 
 BATCH_SIZE = 256
+ENCODING_DIM = 128
 VALIDATION_PROP = 0.2
-EPOCHS_AE = 200
+EPOCHS_AE = 250
 EPOCHS_PT = 100
-EPOCHS_RT = 100
+EPOCHS_RT = 200
 
 
 if __name__ == '__main__':
@@ -239,28 +263,23 @@ if __name__ == '__main__':
     #############################
     model_AE = AutoEncoder().to(device)
     optimizer = torch.optim.Adam(model_AE.parameters(),
-                                 lr=1e-2,
+                                 lr=8e-3,
                                  weight_decay=1e-8)
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=15, gamma=0.5)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
 
-    ptrain_set = MoleculeDataSet(data,
-                                 Data_reduced=[],
-                                 mode="AE")
-    train_len = int((1 - VALIDATION_PROP) * len(ptrain_set))
-    ptrain_t_set, ptrain_v_set = random_split(
-        ptrain_set, [train_len, len(ptrain_set) - train_len])
-    ptrain_loader = DataLoader(ptrain_set, batch_size=BATCH_SIZE,
+    ae_set = MoleculeDataSet(data, Data_reduced=[], mode="AE")
+    train_len = int((1 - VALIDATION_PROP) * len(ae_set))
+    ae_t_set, ae_v_set = random_split(
+        ae_set, [train_len, len(ae_set) - train_len])
+    ae_loader = DataLoader(ae_set, batch_size=BATCH_SIZE,
                                shuffle=False,
                                drop_last=False,
                                )  # for all pretrain data, prediction
-    ptrain_t_loader = DataLoader(
-        ptrain_t_set, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
-    ptrain_v_loader = DataLoader(
-        ptrain_v_set, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
+    ae_t_loader = DataLoader(ae_t_set, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
+    ae_v_loader = DataLoader(ae_v_set, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
 
-    outputs = train(model_AE, EPOCHS_AE, ptrain_t_loader,
-                    ptrain_v_loader, optimizer, scheduler, mode="AE")
+    _, model_AE_best = train(model_AE, EPOCHS_AE, ae_t_loader, ae_v_loader, optimizer, scheduler, mode="AE")
+    model_AE = model_AE_best
 
     #############################
     # Pretraining neural-network
@@ -273,17 +292,15 @@ if __name__ == '__main__':
 
     # pre-train 50000 data with labels
     model_nn = NeuralNetwork().to(device)
-    optimizer = torch.optim.Adam(model_nn.parameters(),
-                                 lr=1e-3
-                                 )
+    optimizer = torch.optim.Adam(model_nn.parameters(),lr=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=10, gamma=0.25)
+        optimizer, step_size=10, gamma=0.2)
 
     ptrain_reduced_set = MoleculeDataSet(data,
                                          Data_reduced=pfeatures_reduced,
                                          mode="pretrain")
     ptrain_red_t_set, ptrain_red_v_set = random_split(
-        ptrain_reduced_set, [train_len, len(ptrain_set) - train_len])
+        ptrain_reduced_set, [train_len, len(ptrain_reduced_set) - train_len])
     ptrain_reduced_loader = DataLoader(ptrain_reduced_set, batch_size=BATCH_SIZE,
                                        shuffle=True,
                                        drop_last=False,
@@ -293,8 +310,8 @@ if __name__ == '__main__':
     ptrain_red_v_loader = DataLoader(
         ptrain_red_v_set, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
 
-    outputs = train(model_nn, EPOCHS_PT, ptrain_red_t_loader,
-                    ptrain_red_v_loader, optimizer, scheduler, mode="train")
+    _, model_nn_best = train(model_nn, EPOCHS_PT, ptrain_red_t_loader, ptrain_red_v_loader, optimizer, scheduler, mode="train")
+    model_nn = model_nn_best
 
     #############################
     # Retraining neural-network
@@ -307,28 +324,43 @@ if __name__ == '__main__':
 
     # retrain nn model using 100 data with target labels
     # model_nn = NeuralNetwork().to(device)
-    optimizer = torch.optim.Adam(model_nn.parameters(),
-                                 lr=1e-4
-                                 )
+    params = [[], [], [], []]
+    for name, param in model_nn.named_parameters():
+        if 'layer1' in name:
+            params[0].append(param)
+        elif 'layer2' in name:
+            params[1].append(param)
+        elif 'layer3' in name:
+            params[2].append(param)
+        elif 'layer4' in name:
+            params[3].append(param)
+    optimizer = torch.optim.Adam([
+        {'params': params[0], 'lr': 1e-5},
+        {'params': params[1], 'lr': 1e-4},
+        {'params': params[2], 'lr': 5e-4},
+        {'params': params[3], 'lr': 1e-3},
+    ])
     scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, step_size=10, gamma=0.25)
 
     train_reduced_set = MoleculeDataSet(data,
                                         Data_reduced=tfeatures_reduced,
                                         mode="retrain")
+    train_len = int((1 - VALIDATION_PROP) * len(train_reduced_set))
     train_red_t_set, train_red_v_set = random_split(
         train_reduced_set, [train_len, len(train_reduced_set) - train_len])
-    train_reduced_loader = DataLoader(train_reduced_set, batch_size=BATCH_SIZE,
-                                      shuffle=True,
-                                      drop_last=False,
-                                      )
+    # train_reduced_loader = DataLoader(train_reduced_set, batch_size=BATCH_SIZE,
+    #                                   shuffle=True,
+    #                                   drop_last=False,
+    #                                   )
     train_red_t_loader = DataLoader(
         train_red_t_set, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
     train_red_v_loader = DataLoader(
         ptrain_red_v_set, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
 
-    outputs = train(model_nn, EPOCHS_RT, train_red_t_loader,
+    outputs, model_nn_best = train(model_nn, EPOCHS_RT, train_red_t_loader,
                     train_red_v_loader, optimizer, scheduler, mode="train")
+    model_nn = model_nn_best
 
     #############################
     # Test
