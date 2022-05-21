@@ -337,12 +337,12 @@ if __name__ == '__main__':
     model_AE.eval()
     test_tensor = torch.from_numpy(data.testfeatures).float().to(device)
     testfeatures_reduced = model_AE.encoder(test_tensor)
+
+    # get the predictions
     prediction = model_nn(testfeatures_reduced).detach().cpu().numpy()
     IDs = data.test_ID
     with open('prediction.csv', 'w', encoding='UTF8', newline='') as f:
         writer = csv.writer(f)
+        writer.writerow(['Id', 'y'])
         for i in range(len(IDs)):
-            if i == 0:
-                writer.writerow(['Id', 'y'])
-            else:
-                writer.writerow([IDs[i], prediction[i][0]])
+            writer.writerow([IDs[i], prediction[i][0]])
