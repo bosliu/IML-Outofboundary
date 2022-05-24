@@ -143,3 +143,5 @@ test.py
 /task3/dataset/
 /task4/data
 .pdf
+/task4/model
+/task4/prediction
